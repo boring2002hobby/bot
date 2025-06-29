@@ -1,9 +1,27 @@
 import os
+import logging
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Dispatcher
+
+# Set up Flask app
+app = Flask(__name__)
+
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Your Bot Token from BotFather
 BOT_TOKEN = os.environ.get("8013925344:AAHRLMDII2Ukd3QWAcmQ2sjwV7a8qlQHUUE")
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN is not set!")
+    exit(1)
+
+# Initialize the Telegram Bot application
+application = Application.builder().token(BOT_TOKEN).build()
+dispatcher = application.updater.dispatcher
 
 # Start command handler
 async def start(update: Update, context):
@@ -16,11 +34,6 @@ async def handle_photo(update: Update, context):
     photo = update.message.photo[-1]
     file = await photo.get_file()
     file_url = file.file_url
-    
-    # Save image to the "images" directory
-    os.makedirs('images', exist_ok=True)
-    file_path = f"images/{photo.file_id}.jpg"
-    await file.download_to_drive(file_path)
     
     # Respond with the uploaded photo and search buttons
     search_buttons = [
@@ -53,20 +66,33 @@ async def handle_photo(update: Update, context):
     ]
     
     # Send the uploaded photo and buttons
-    await update.message.reply_photo(photo=open(file_path, 'rb'), caption="Here is your uploaded image. Choose a search engine:", reply_markup={'inline_keyboard': search_buttons})
+    await update.message.reply_photo(photo=file_url, caption="Here is your uploaded image. Choose a search engine:", reply_markup={'inline_keyboard': search_buttons})
 
-# Main function to run the bot
-def main():
-    application = Application.builder().token(BOT_TOKEN).build()
-
+# Main function to set up command handlers
+def setup_handlers():
     # Command handler for the /start command
-    application.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("start", start))
 
     # Message handler for photos
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    dispatcher.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    # Start the bot
-    application.run_polling()
+# Set up the webhook endpoint for the serverless function
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # This gets the incoming update from Telegram
+    json_str = request.get_data().decode('UTF-8')
+    update = Update.de_json(json_str, application.bot)
+    
+    # Process the update (use the dispatcher to handle the update)
+    dispatcher.process_update(update)
+    
+    return "OK", 200
 
+# The entry point for the serverless function
+def handler(event, context):
+    setup_handlers()
+    return app(event, context)
+
+# Required for Vercel to run the app correctly
 if __name__ == "__main__":
-    main()
+    app.run(debug=True)
